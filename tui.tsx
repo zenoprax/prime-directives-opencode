@@ -2,25 +2,33 @@
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
-import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { For, createMemo, createSignal, onCleanup } from "solid-js"
 
-// TUI status panel for the session-rules plugin.
+// TUI status panel for the session-rules plugin — OpenCode V2 CLI port.
 //
 // Shows the rule cascade:
 //
-//   SYSTEM   your global SYSTEM.md (hard-coded via config "instructions")
-//   PROJECT  the developer's AGENTS.md AND your PROJECT.md overlay, side by side
+//   SYSTEM   the global SYSTEM.md (referenced by config "instructions")
+//   PROJECT  the developer's AGENTS.md AND the PROJECT.md overlay, side by side
 //   SESSION  session-rules file (.opencode/sessions/<sessionID>.md)
 //
-// The server plugin sidecar (.opencode/sessions/<sessionID>.status.json) drives
-// the "injected" / "compacted" readout.
+// The server plugin's sidecar (.opencode/sessions/<sessionID>.status.json)
+// drives the "injected" / "compacted" readout.
+//
+// APIs verified against @opencode/plugin@2.0.30:
+//   Plugin.define({ id, setup })
+//   context.ui.slot({ append: "sidebar.content", render })
+//   context.ui.toast.show({ ... })
+//   context.theme.text.{base,muted}.feedback.success.base
+//   usePlugin()
 
-const id = "local.session-rules"
 const RULE = /^\s*[-*]\s+\S/
 
+type LayerKey = "SYSTEM" | "PROJECT" | "SESSION"
+
 type Layer = {
-  key: "SYSTEM" | "PROJECT" | "SESSION"
+  key: LayerKey
   path: string
   label: string
   exists: boolean
@@ -74,7 +82,7 @@ function nearest(directory: string, name: string): string | null {
   return null
 }
 
-// PROJECT is two layers in one: the developer's AGENTS.md and your PROJECT.md
+// PROJECT is two layers in one: the developer's AGENTS.md and the PROJECT.md
 // overlay. Show both; the overlay is injected by the server plugin so it wins
 // on conflicts.
 function projectFiles(directory: string): string[] {
@@ -86,15 +94,13 @@ function projectFiles(directory: string): string[] {
   return out
 }
 
-// SYSTEM is the single global SYSTEM.md referenced by config "instructions",
-// so there is no second filename to guess.
-function systemRule(config: string): string | null {
-  const dirs = [
-    join(homedir(), ".config", "opencode"),
-    process.env.OPENCODE_CONFIG_DIR,
-    config,
-    "/etc/opencode",
-  ].filter((dir): dir is string => Boolean(dir))
+// SYSTEM is the single global SYSTEM.md referenced by config "instructions".
+// V2's CLI plugin context no longer exposes the config path, so only the
+// well-known locations are probed.
+function systemRule(): string | null {
+  const dirs = [join(homedir(), ".config", "opencode"), process.env.OPENCODE_CONFIG_DIR, "/etc/opencode"].filter(
+    (dir): dir is string => Boolean(dir),
+  )
   return firstExisting(dirs.map((dir) => join(dir, "SYSTEM.md")))
 }
 
@@ -106,13 +112,12 @@ function display(path: string, base: string): string {
   return path
 }
 
-function layers(api: TuiPluginApi, sessionID: string): Layer[] {
-  const directory = api.state.path.directory
-  const system = systemRule(api.state.path.config)
+function layers(directory: string, sessionID: string): Layer[] {
+  const system = systemRule()
   const projects = projectFiles(directory)
   const session = join(directory, ".opencode", "sessions", `${sessionID}.md`)
 
-  const layer = (key: Layer["key"], path: string | null, label: string): Layer => {
+  const layer = (key: LayerKey, path: string | null, label: string): Layer => {
     const state = path ? inspect(path) : { exists: false, rules: 0 }
     return { key, path: path ?? "", label, exists: state.exists, rules: state.rules }
   }
@@ -152,35 +157,36 @@ function ago(at: number | null): string {
   return `${Math.round(minutes / 60)}h ago`
 }
 
-function View(props: { api: TuiPluginApi; session_id: string }) {
-  const theme = () => props.api.theme.current
+function View(props: { sessionID: string }) {
+  const context = usePlugin()
   const [tick, setTick] = createSignal(0)
   const timer = setInterval(() => setTick((value) => value + 1), 1000)
   onCleanup(() => clearInterval(timer))
 
+  const directory = () => context.location?.directory ?? process.cwd()
+
   const info = createMemo<Info>(() => {
     tick()
-    const directory = props.api.state.path.directory
     return {
-      layers: layers(props.api, props.session_id),
-      ...status(directory, props.session_id),
+      layers: layers(directory(), props.sessionID),
+      ...status(directory(), props.sessionID),
     }
   })
 
   return (
     <box>
-      <text fg={theme().text}>
+      <text fg={context.theme.text.base}>
         <b>Rules</b>
       </text>
       <For each={info().layers}>
         {(layer) => (
           <box flexDirection="row" gap={1}>
-            <text flexShrink={0} style={{ fg: layer.exists ? theme().success : theme().textMuted }}>
+            <text flexShrink={0} fg={layer.exists ? context.theme.text.feedback.success.base : context.theme.text.muted}>
               •
             </text>
-            <text fg={theme().text} wrapMode="word">
+            <text fg={context.theme.text.base} wrapMode="word">
               <b>{layer.key}</b>{" "}
-              <span style={{ fg: theme().textMuted }}>
+              <span style={{ fg: context.theme.text.muted }}>
                 {layer.label}
                 {layer.exists ? `  ${layer.rules}` : ""}
               </span>
@@ -188,7 +194,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
           </box>
         )}
       </For>
-      <text fg={theme().textMuted}>
+      <text fg={context.theme.text.muted}>
         injected {ago(info().injected)}
         {info().compacted ? ` · compacted ${ago(info().compacted)}` : ""}
       </text>
@@ -196,24 +202,19 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
   )
 }
 
-const tui: TuiPlugin = async (api) => {
-  api.slots.register({
-    order: 150,
-    slots: {
-      sidebar_content(_ctx, props) {
-        return <View api={api} session_id={props.session_id} />
-      },
-    },
-  })
+export default Plugin.define({
+  id: "local.session-rules.tui",
+  setup(context) {
+    context.ui.slot({
+      append: "sidebar.content",
+      render: (props) => <View sessionID={props.sessionID} />,
+    })
 
-  api.ui.toast({
-    variant: "info",
-    title: "session-rules",
-    message: "Rule cascade panel active",
-    duration: 3000,
-  })
-}
-
-const plugin: TuiPluginModule & { id: string } = { id, tui }
-
-export default plugin
+    context.ui.toast.show({
+      variant: "info",
+      title: "session-rules",
+      message: "Rule cascade panel active",
+      duration: 3000,
+    })
+  },
+})
