@@ -1,5 +1,5 @@
 {
-  "name": "@local/opencode-session-rules",
+  "name": "@local/prime-directives",
   "private": true,
   "type": "module",
   "exports": { "./tui": "./tui.tsx" },

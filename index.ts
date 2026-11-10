@@ -1,40 +1,8 @@
-// Session-rules — OpenCode V2 server plugin.
-//
-// Port of the V1 plugin (plugins/session-rules.ts). It injects two
-// non-standard rule layers on every agent-loop request, so they survive
-// context compaction:
-//
-//   PROJECT.md                            per-project overlay (overrides AGENTS.md)
-//   .opencode/sessions/<sessionID>.md     per-session rules
-//
-// The developer's AGENTS.md and the global SYSTEM.md are handled by OpenCode
-// itself (project/ambient discovery and the config "instructions" field), so
-// they are not injected here.
-//
-// It also owns the session task list. OpenCode V2 removed the built-in
-// todowrite tool and the session.todo API, so this plugin registers a
-// V1-compatible `todowrite` tool (pinned to the chat catalog, not Code Mode)
-// and writes the list to its own per-session file:
-//
-//   .opencode/sessions/<sessionID>.tasks.md
-//
-// Keeping tasks out of the rules file means rule counts stay accurate and a
-// compaction can never merge tasks into the rule layer. Both files are re-read
-// from disk on every request, so the task list outlives compaction.
-//
-// APIs verified against @opencode/plugin@2.0.30:
-//   Plugin.define({ id, setup })
-//   ctx.location.directory
-//   ctx.tool.transform(editor)            editor.get(id) / editor.add(tool)
-//   ctx.session.hook("context", cb)       event.sessionID, event.system: SystemPart[]
-//   ctx.session.hook("compaction", cb)    event.sessionID, event.system: SystemPart[]
-//   Tool.Result                           { content: string | Content[] }
-
 import { Plugin } from "@opencode/plugin"
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 
-const FALLBACK = ".opencode/SESSION.md"
+const FALLBACK = ".opencode/prime-directives/SESSION.md"
 const LEGACY_TASK_HEADING = "## Task list (auto-synced)"
 const TASK_HEADING = "# Task list (auto-synced)"
 
@@ -43,7 +11,7 @@ type TodoPriority = "high" | "medium" | "low"
 type Todo = { content: string; status: TodoStatus; priority: TodoPriority; activeForm?: string }
 
 function rulesRelPath(sessionID?: string): string {
-  return sessionID ? `.opencode/sessions/${sessionID}.md` : FALLBACK
+  return sessionID ? `.opencode/prime-directives/${sessionID}.md` : FALLBACK
 }
 
 function rulesFile(directory: string, sessionID?: string): string {
@@ -51,7 +19,7 @@ function rulesFile(directory: string, sessionID?: string): string {
 }
 
 function tasksRelPath(sessionID?: string): string {
-  return sessionID ? `.opencode/sessions/${sessionID}.tasks.md` : ".opencode/sessions/SESSION.tasks.md"
+  return sessionID ? `.opencode/prime-directives/${sessionID}.tasks.md` : ".opencode/prime-directives/SESSION.tasks.md"
 }
 
 function tasksFile(directory: string, sessionID?: string): string {
@@ -122,7 +90,7 @@ function countRules(rules: string): number {
 function updateStatus(directory: string, sessionID: string | undefined, patch: Record<string, unknown>): void {
   if (!sessionID) return
   try {
-    const dir = join(directory, ".opencode", "sessions")
+    const dir = join(directory, ".opencode", "prime-directives")
     mkdirSync(dir, { recursive: true })
     const path = join(dir, `${sessionID}.status.json`)
     let prev: Record<string, unknown> = {}
@@ -245,7 +213,7 @@ const TODOWRITE_DESCRIPTION = [
 ].join("\n")
 
 export default Plugin.define({
-  id: "local.session-rules",
+  id: "local.prime-directives",
   async setup(ctx) {
     const directory = ctx.location.directory
 
@@ -272,14 +240,14 @@ export default Plugin.define({
     })
 
     // Runs immediately before every agent-loop model request. Keeps the
-    // project overlay, session rules, and task list in front of the model
+    // project overlay, prime directives, and task list in front of the model
     // instead of relying on memory that compaction can discard.
     await ctx.session.hook("context", (event) => {
       const rel = rulesRelPath(event.sessionID)
       const { rules, tasks } = readLayers(directory, event.sessionID)
       const overlay = readProjectOverlay(directory)
 
-      // The overlay goes first so the session rules (most specific) come last.
+      // The overlay goes first so the prime directives (most specific) come last.
       if (overlay) {
         event.system.push({
           type: "text",
@@ -293,13 +261,13 @@ export default Plugin.define({
       event.system.push({
         type: "text",
         text:
-          "\n# SESSION RULES (authoritative, mutable)\n" +
+          "\n# PRIME DIRECTIVES (authoritative, mutable)\n" +
           `File: ${rel}\n` +
-          "These rules outrank interactive prompts. When the user asks to add, " +
-          `change, or drop a rule, edit ${rel}, then restate the full rule set ` +
+          "These directives outrank interactive prompts. When the user asks to add, " +
+          `change, or drop a directive, edit ${rel}, then restate the full directive set ` +
           "to confirm. The task list is a separate file and is preserved across " +
           "compaction.\n\n" +
-          (rules || "(no session rules set)"),
+          (rules || "(no prime directives set)"),
       })
 
       if (tasks) {
@@ -321,14 +289,14 @@ export default Plugin.define({
       })
     })
 
-    // Runs when the history is compacted. Preserve the session rules and the
+    // Runs when the history is compacted. Preserve the prime directives and the
     // task list so the summariser carries them forward. The task list is
     // already on disk (written on every todowrite call), so it is read
     // straight from its own file.
     await ctx.session.hook("compaction", (event) => {
       const { rules, tasks } = readLayers(directory, event.sessionID)
       const sections = [
-        "## SESSION RULES (preserve verbatim; authoritative)\n" + (rules || "(no session rules set)"),
+        "## PRIME DIRECTIVES (preserve verbatim; authoritative)\n" + (rules || "(no prime directives set)"),
         tasks ? "## TASK LIST (preserve exactly; keep every item)\n" + tasks : "",
       ].filter(Boolean)
       event.system.push({ type: "text", text: sections.join("\n\n") })

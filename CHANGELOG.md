@@ -4,7 +4,34 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
-### Commit `16e6122` — Bug fixes (2026-10-31)
+## [1.0.0] - 2026-11-10
+
+### Renamed from `session-rules` to `prime-directives`
+
+**Package renamed**
+- `@local/opencode-session-rules` → `@local/prime-directives`
+
+**Plugin IDs renamed**
+- Server: `local.session-rules` → `local.prime-directives`
+- TUI: `local.session-rules.tui` → `local.prime-directives.tui`
+
+**File paths updated**
+- `.opencode/sessions/<sessionID>.md` → `.opencode/prime-directives/<sessionID>.md`
+- `.opencode/sessions/<sessionID>.tasks.md` → `.opencode/prime-directives/<sessionID>.tasks.md`
+- `.opencode/sessions/<sessionID>.status.json` → `.opencode/prime-directives/<sessionID>.status.json`
+
+**Terminology updated**
+- "session rules" → "prime directives"
+- "rule" (in session context) → "directive"
+- All user-facing messages, comments, and documentation updated accordingly
+
+**Functionality unchanged** — only naming and paths changed.
+
+---
+
+## [0.3.0] - 2026-10-31
+
+### Bug fixes
 
 **Task list now lives in its own file**
 The `todowrite` tool no longer embeds the task list inside the session rules file (`.opencode/sessions/<sessionID>.md`). Instead, it writes to a dedicated per-session file:
@@ -35,3 +62,21 @@ The server plugin is loaded directly by OpenCode via the plugin manifest; it doe
 - New `readLayers()` helper reads rules and tasks from their separate files, falling back to the legacy section only when a session has not yet called `todowrite` since upgrade
 - Compaction hook injects rules and task list as separate verbatim sections
 - Status sidecar now includes `tasksFile` path for TUI reference
+
+---
+
+## [0.2.0] - 2026-10-15
+
+### Features
+- Ported plugin to OpenCode V2 plugin API
+- Server plugin with `context` and `compaction` hooks
+- TUI plugin with sidebar panel showing rule cascade
+- `todowrite` tool restored (codemode: false)
+
+---
+
+## [0.1.0] - 2026-10-13
+
+### Initial release
+- Session rules persistence across compaction
+- Basic project/session rule layer injection

@@ -5,15 +5,15 @@ import { dirname, join } from "node:path"
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { For, createMemo, createSignal, onCleanup } from "solid-js"
 
-// TUI status panel for the session-rules plugin — OpenCode V2 CLI port.
+// TUI status panel for the prime-directives plugin — OpenCode V2 CLI port.
 //
 // Shows the rule cascade:
 //
 //   SYSTEM   the global SYSTEM.md (referenced by config "instructions")
 //   PROJECT  the developer's AGENTS.md AND the PROJECT.md overlay, side by side
-//   SESSION  session-rules file (.opencode/sessions/<sessionID>.md)
+//   SESSION  prime-directives file (.opencode/prime-directives/<sessionID>.md)
 //
-// The server plugin's sidecar (.opencode/sessions/<sessionID>.status.json)
+// The server plugin's sidecar (.opencode/prime-directives/<sessionID>.status.json)
 // drives the "injected" / "compacted" readout.
 //
 // APIs verified against @opencode/plugin@2.0.30:
@@ -115,7 +115,7 @@ function display(path: string, base: string): string {
 function layers(directory: string, sessionID: string): Layer[] {
   const system = systemRule()
   const projects = projectFiles(directory)
-  const session = join(directory, ".opencode", "sessions", `${sessionID}.md`)
+  const session = join(directory, ".opencode", "prime-directives", `${sessionID}.md`)
 
   const layer = (key: LayerKey, path: string | null, label: string): Layer => {
     const state = path ? inspect(path) : { exists: false, rules: 0 }
@@ -128,7 +128,7 @@ function layers(directory: string, sessionID: string): Layer[] {
   } else {
     for (const path of projects) out.push(layer("PROJECT", path, display(path, directory)))
   }
-  out.push(layer("SESSION", session, `.opencode/sessions/${sessionID.slice(0, 8)}.md`))
+  out.push(layer("SESSION", session, `.opencode/prime-directives/${sessionID.slice(0, 8)}.md`))
   return out
 }
 
@@ -136,7 +136,7 @@ function status(directory: string, sessionID: string): { injected: number | null
   let injected: number | null = null
   let compacted: number | null = null
   try {
-    const path = join(directory, ".opencode", "sessions", `${sessionID}.status.json`)
+    const path = join(directory, ".opencode", "prime-directives", `${sessionID}.status.json`)
     if (existsSync(path)) {
       const data = JSON.parse(readFileSync(path, "utf8")) as { at?: unknown; compacted?: unknown }
       if (typeof data.at === "number") injected = data.at
@@ -203,7 +203,7 @@ function View(props: { sessionID: string }) {
 }
 
 export default Plugin.define({
-  id: "local.session-rules.tui",
+  id: "local.prime-directives.tui",
   setup(context) {
     context.ui.slot({
       append: "sidebar.content",
@@ -212,7 +212,7 @@ export default Plugin.define({
 
     context.ui.toast.show({
       variant: "info",
-      title: "session-rules",
+      title: "prime-directives",
       message: "Rule cascade panel active",
       duration: 3000,
     })
