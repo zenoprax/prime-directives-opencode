@@ -73,4 +73,17 @@ Each layer shows a green dot and rule count when present. The footer shows how l
 - Both files target the `@opencode/plugin` API (tested against `@opencode/plugin@2.0.30`). They are intended to load as the server and TUI parts of one plugin.
 - Package exports: `"./tui"` for the TUI plugin. The server plugin is loaded via the plugin manifest and does not need a package export.
 
+## Example command
+
+Add this to your `opencode.jsonc` to get a `/rules` command for managing prime directives:
+
+```jsonc
+"commands": {
+  "rules": {
+    "description": "Add, change, or remove a persistent PRIME DIRECTIVE",
+    "template": "The user wants to change the prime directive set.\n\n1. Find your prime directives file path in the PRIME DIRECTIVES block of your system\n   prompt (`.opencode/prime-directives/<sessionID>.md`). Read it if it exists.\n2. Apply the request below: add, modify, or delete the relevant directive. Delete\n   directives that are dropped rather than commenting them out.\n3. Keep the file short and normative, and do not duplicate SYSTEM or PROJECT\n   rules into it.\n4. After editing, restate the full current prime directive set for confirmation.\n\nRequest: $ARGUMENTS"
+  }
+}
+```
+
 See [CHANGELOG.md](CHANGELOG.md) for version history.
