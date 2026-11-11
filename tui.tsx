@@ -5,9 +5,9 @@ import { dirname, join } from "node:path"
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { For, createMemo, createSignal, onCleanup } from "solid-js"
 
-// TUI status panel for the prime-directives plugin — OpenCode V2 CLI port.
+// TUI status panel for the prime-directives plugin.
 //
-// Shows the rule cascade:
+// Shows the directive cascade:
 //
 //   SYSTEM   the global SYSTEM.md (referenced by config "instructions")
 //   PROJECT  the developer's AGENTS.md AND the PROJECT.md overlay, side by side
@@ -16,14 +16,14 @@ import { For, createMemo, createSignal, onCleanup } from "solid-js"
 // The server plugin's sidecar (.opencode/prime-directives/<sessionID>.status.json)
 // drives the "injected" / "compacted" readout.
 //
-// APIs verified against @opencode/plugin@2.0.30:
+// Plugin APIs used:
 //   Plugin.define({ id, setup })
-//   context.ui.slot({ append: "sidebar.content", render })
+//   context.ui.slot({ prepend: "sidebar.content", render })
 //   context.ui.toast.show({ ... })
-//   context.theme.text.{base,muted}.feedback.success.base
+//   context.theme.text.{base,muted}.feedback.{success,warning}.base
 //   usePlugin()
 
-const RULE = /^\s*[-*]\s+\S/
+const DIRECTIVE = /^\s*[-*]\s+\S/
 
 type LayerKey = "SYSTEM" | "PROJECT" | "SESSION"
 
@@ -32,26 +32,27 @@ type Layer = {
   path: string
   label: string
   exists: boolean
-  rules: number
+  directives: number
 }
 
 type Info = {
   layers: Layer[]
   injected: number | null
   compacted: number | null
+  legacy: boolean
 }
 
-function countRules(text: string): number {
-  return text.split("\n").filter((line) => RULE.test(line)).length
+function countDirectives(text: string): number {
+  return text.split("\n").filter((line) => DIRECTIVE.test(line)).length
 }
 
-function inspect(path: string): { exists: boolean; rules: number } {
+function inspect(path: string): { exists: boolean; directives: number } {
   try {
-    if (!existsSync(path)) return { exists: false, rules: 0 }
+    if (!existsSync(path)) return { exists: false, directives: 0 }
     const raw = readFileSync(path, "utf8")
-    return { exists: raw.trim().length > 0, rules: countRules(raw) }
+    return { exists: raw.trim().length > 0, directives: countDirectives(raw) }
   } catch {
-    return { exists: false, rules: 0 }
+    return { exists: false, directives: 0 }
   }
 }
 
@@ -95,9 +96,8 @@ function projectFiles(directory: string): string[] {
 }
 
 // SYSTEM is the single global SYSTEM.md referenced by config "instructions".
-// V2's CLI plugin context no longer exposes the config path, so only the
-// well-known locations are probed.
-function systemRule(): string | null {
+// The plugin context does not expose the config path, so probe the well-known locations.
+function systemDirectiveFile(): string | null {
   const dirs = [join(homedir(), ".config", "opencode"), process.env.OPENCODE_CONFIG_DIR, "/etc/opencode"].filter(
     (dir): dir is string => Boolean(dir),
   )
@@ -113,13 +113,13 @@ function display(path: string, base: string): string {
 }
 
 function layers(directory: string, sessionID: string): Layer[] {
-  const system = systemRule()
+  const system = systemDirectiveFile()
   const projects = projectFiles(directory)
   const session = join(directory, ".opencode", "prime-directives", `${sessionID}.md`)
 
   const layer = (key: LayerKey, path: string | null, label: string): Layer => {
-    const state = path ? inspect(path) : { exists: false, rules: 0 }
-    return { key, path: path ?? "", label, exists: state.exists, rules: state.rules }
+    const state = path ? inspect(path) : { exists: false, directives: 0 }
+    return { key, path: path ?? "", label, exists: state.exists, directives: state.directives }
   }
 
   const out: Layer[] = [layer("SYSTEM", system, system ? display(system, directory) : "not set")]
@@ -130,6 +130,12 @@ function layers(directory: string, sessionID: string): Layer[] {
   }
   out.push(layer("SESSION", session, `.opencode/prime-directives/${sessionID.slice(0, 8)}.md`))
   return out
+}
+
+// The old .opencode/sessions/ directory. The plugin no longer reads it, but an
+// existing copy is easy to confuse with the current prime-directives file.
+function legacyDirectory(directory: string): boolean {
+  return existsSync(join(directory, ".opencode", "sessions"))
 }
 
 function status(directory: string, sessionID: string): { injected: number | null; compacted: number | null } {
@@ -170,30 +176,39 @@ function View(props: { sessionID: string }) {
     return {
       layers: layers(directory(), props.sessionID),
       ...status(directory(), props.sessionID),
+      legacy: legacyDirectory(directory()),
     }
   })
 
   return (
     <box>
       <text fg={context.theme.text.base}>
-        <b>Rules</b>
+        <b>Prime Directives</b>
       </text>
       <For each={info().layers}>
         {(layer) => (
           <box flexDirection="row" gap={1}>
-            <text flexShrink={0} fg={layer.exists ? context.theme.text.feedback.success.base : context.theme.text.muted}>
+            <text
+              flexShrink={0}
+              fg={layer.exists ? context.theme.text.feedback.success.base : context.theme.text.muted}
+            >
               •
             </text>
             <text fg={context.theme.text.base} wrapMode="word">
               <b>{layer.key}</b>{" "}
               <span style={{ fg: context.theme.text.muted }}>
                 {layer.label}
-                {layer.exists ? `  ${layer.rules}` : ""}
+                {layer.exists ? `  ${layer.directives}` : ""}
               </span>
             </text>
           </box>
         )}
       </For>
+      {info().legacy ? (
+        <text fg={context.theme.text.feedback.warning.base} wrapMode="word">
+          ! .opencode/sessions/ is stale, remove it manually
+        </text>
+      ) : null}
       <text fg={context.theme.text.muted}>
         injected {ago(info().injected)}
         {info().compacted ? ` · compacted ${ago(info().compacted)}` : ""}
@@ -206,15 +221,15 @@ export default Plugin.define({
   id: "local.prime-directives.tui",
   setup(context) {
     context.ui.slot({
-      append: "sidebar.content",
+      prepend: "sidebar.content",
       render: (props) => <View sessionID={props.sessionID} />,
     })
 
     context.ui.toast.show({
       variant: "info",
       title: "prime-directives",
-      message: "Rule cascade panel active",
-      duration: 3000,
+      message: "Prime Directives loaded!",
+      duration: 1500,
     })
   },
 })

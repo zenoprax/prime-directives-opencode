@@ -3,19 +3,18 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { dirname, join } from "node:path"
 
 const FALLBACK = ".opencode/prime-directives/SESSION.md"
-const LEGACY_TASK_HEADING = "## Task list (auto-synced)"
 const TASK_HEADING = "# Task list (auto-synced)"
 
 type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled"
 type TodoPriority = "high" | "medium" | "low"
 type Todo = { content: string; status: TodoStatus; priority: TodoPriority; activeForm?: string }
 
-function rulesRelPath(sessionID?: string): string {
+function directivesRelPath(sessionID?: string): string {
   return sessionID ? `.opencode/prime-directives/${sessionID}.md` : FALLBACK
 }
 
-function rulesFile(directory: string, sessionID?: string): string {
-  return join(directory, rulesRelPath(sessionID))
+function directivesFile(directory: string, sessionID?: string): string {
+  return join(directory, directivesRelPath(sessionID))
 }
 
 function tasksRelPath(sessionID?: string): string {
@@ -34,24 +33,12 @@ function readFileIfExists(path: string): string {
   }
 }
 
-function readRules(directory: string, sessionID?: string): string {
-  return readFileIfExists(rulesFile(directory, sessionID))
+function readDirectives(directory: string, sessionID?: string): string {
+  return readFileIfExists(directivesFile(directory, sessionID))
 }
 
 function readTasks(directory: string, sessionID?: string): string {
   return readFileIfExists(tasksFile(directory, sessionID))
-}
-
-// Older versions wrote the task list into the rules file under
-// LEGACY_TASK_HEADING. Split it out so callers only ever see rule directives;
-// writeTaskList() migrates the file itself on the next todowrite call.
-function splitLegacyTasks(rules: string): { rules: string; tasks: string } {
-  const index = rules.indexOf(LEGACY_TASK_HEADING)
-  if (index < 0) return { rules, tasks: "" }
-  return {
-    rules: rules.slice(0, index).trim(),
-    tasks: rules.slice(index).trim(),
-  }
 }
 
 function nearest(directory: string, name: string): string | null {
@@ -77,12 +64,10 @@ function readProjectOverlay(directory: string): { path: string; content: string 
   }
 }
 
-const RULE = /^\s*[-*]\s+\S/
+const DIRECTIVE = /^\s*[-*]\s+\S/
 
-function countRules(rules: string): number {
-  return splitLegacyTasks(rules)
-    .rules.split("\n")
-    .filter((line) => RULE.test(line)).length
+function countDirectives(directives: string): number {
+  return directives.split("\n").filter((line) => DIRECTIVE.test(line)).length
 }
 
 // Best-effort status sidecar for the TUI panel. Never let status reporting
@@ -122,22 +107,9 @@ function countTasks(tasks: string): number {
   return tasks.split("\n").filter((line) => /^\s*-\s+\[/.test(line)).length
 }
 
-// Replace the whole per-session task file. An empty list removes it. Also strips
-// the legacy task section from the rules file so it stays directive-only.
+// Replace the whole per-session task file. An empty list removes it.
 function writeTaskList(directory: string, sessionID: string | undefined, todos: Todo[]): void {
   if (!sessionID) return
-
-  // One-time migration from the version that kept tasks inside the rules file.
-  const rulesPath = rulesFile(directory, sessionID)
-  try {
-    const text = readFileIfExists(rulesPath)
-    const cut = text.indexOf(LEGACY_TASK_HEADING)
-    if (cut >= 0) {
-      writeFileSync(rulesPath, text.slice(0, cut).replace(/\s+$/, "") + "\n")
-    }
-  } catch {
-    // ignore: the task file is still the source of truth
-  }
 
   const path = tasksFile(directory, sessionID)
   try {
@@ -152,17 +124,6 @@ function writeTaskList(directory: string, sessionID: string | undefined, todos: 
   }
 }
 
-// The rules body and the task body are read separately; if the legacy section is
-// still present (session never called todowrite since the upgrade), use it.
-function readLayers(directory: string, sessionID: string | undefined): { rules: string; tasks: string } {
-  const raw = readRules(directory, sessionID)
-  const legacy = splitLegacyTasks(raw)
-  return {
-    rules: legacy.rules,
-    tasks: readTasks(directory, sessionID) || legacy.tasks,
-  }
-}
-
 function summarize(todos: Todo[]): string {
   const count = (status: TodoStatus) => todos.filter((todo) => todo.status === status).length
   return (
@@ -171,8 +132,7 @@ function summarize(todos: Todo[]): string {
   )
 }
 
-// JSON Schema input for the restored todowrite tool, matching the V1 tool
-// semantics: every call replaces the whole list.
+// JSON Schema input for the todowrite tool. Every call replaces the whole list.
 const TODOWRITE_INPUT = {
   type: "object",
   properties: {
@@ -217,13 +177,10 @@ export default Plugin.define({
   async setup(ctx) {
     const directory = ctx.location.directory
 
-    // OpenCode V2 removed the built-in todowrite tool. Restore it here so the
-    // established workflow (and SYSTEM.md) keeps working; the tool writes to
-    // the per-session task file, which is what survives compaction.
+    // The tool writes to the per-session task file, which survives compaction.
     // codemode:false keeps the tool in the chat catalog instead of hiding it
     // behind the Code Mode `execute` tool.
     await ctx.tool.transform((editor) => {
-      if (editor.get("todowrite")) return // a host-provided tool wins
       editor.add({
         name: "todowrite",
         description: TODOWRITE_DESCRIPTION,
@@ -243,8 +200,9 @@ export default Plugin.define({
     // project overlay, prime directives, and task list in front of the model
     // instead of relying on memory that compaction can discard.
     await ctx.session.hook("context", (event) => {
-      const rel = rulesRelPath(event.sessionID)
-      const { rules, tasks } = readLayers(directory, event.sessionID)
+      const rel = directivesRelPath(event.sessionID)
+      const directives = readDirectives(directory, event.sessionID)
+      const tasks = readTasks(directory, event.sessionID)
       const overlay = readProjectOverlay(directory)
 
       // The overlay goes first so the prime directives (most specific) come last.
@@ -267,7 +225,7 @@ export default Plugin.define({
           `change, or drop a directive, edit ${rel}, then restate the full directive set ` +
           "to confirm. The task list is a separate file and is preserved across " +
           "compaction.\n\n" +
-          (rules || "(no prime directives set)"),
+          (directives || "(no prime directives set)"),
       })
 
       if (tasks) {
@@ -282,7 +240,7 @@ export default Plugin.define({
 
       updateStatus(directory, event.sessionID, {
         at: Date.now(),
-        rules: countRules(rules),
+        directives: countDirectives(directives),
         file: rel,
         tasksFile: tasksRelPath(event.sessionID),
         overlay: overlay?.path ?? null,
@@ -294,16 +252,17 @@ export default Plugin.define({
     // already on disk (written on every todowrite call), so it is read
     // straight from its own file.
     await ctx.session.hook("compaction", (event) => {
-      const { rules, tasks } = readLayers(directory, event.sessionID)
+      const directives = readDirectives(directory, event.sessionID)
+      const tasks = readTasks(directory, event.sessionID)
       const sections = [
-        "## PRIME DIRECTIVES (preserve verbatim; authoritative)\n" + (rules || "(no prime directives set)"),
+        "## PRIME DIRECTIVES (preserve verbatim; authoritative)\n" + (directives || "(no prime directives set)"),
         tasks ? "## TASK LIST (preserve exactly; keep every item)\n" + tasks : "",
       ].filter(Boolean)
       event.system.push({ type: "text", text: sections.join("\n\n") })
 
       updateStatus(directory, event.sessionID, {
         compacted: Date.now(),
-        rules: countRules(rules),
+        directives: countDirectives(directives),
         tasks: countTasks(tasks),
       })
     })
